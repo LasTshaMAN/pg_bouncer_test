@@ -51,11 +51,3 @@ Or you can run Go stress test:
 ```bash
 go test test_test.go -v
 ```
-
-// TODO
-// About network partitioning
-## Enable network partitioning
-You might want to simulate real-world network partitioning by configuring it like this:
-```bash
-
-```
