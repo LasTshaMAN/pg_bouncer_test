@@ -2,6 +2,7 @@ package pg_bouncer_test
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -20,15 +21,24 @@ func Test(t *testing.T) {
 
 	executor := jobs.NewExecutor(20, 1)
 
-	const jobsAmount = 1000
+	const jobsAmount = 100
 
 	res := make(chan error, jobsAmount)
 	for i := 1; i <= jobsAmount; i++ {
+		// Simple query
 		executor.Enqueue(func() {
-			_, err := db.Exec("SELECT pg_sleep(1);")
+			_, err := db.Exec("SELECT 1;")
 			res <- err
 		})
-		fmt.Println("queued job")
+		// Long-running query
+		executor.Enqueue(func() {
+			seconds := rand.Intn(10)
+			query := fmt.Sprintf("SELECT pg_sleep(%d);", seconds)
+			_, err := db.Exec(query)
+			res <- err
+		})
+
+		fmt.Println("queued jobs")
 
 		// Main thread does something else, before it starts scheduling Postgres requests again
 		time.Sleep(10 * time.Millisecond)
