@@ -19,43 +19,72 @@ func Test(t *testing.T) {
 	db.SetMaxIdleConns(8)
 	db.SetMaxOpenConns(8)
 
-	executor := jobs.NewExecutor(20, 1)
-
 	const jobsAmount = 100
+	executor := jobs.NewExecutor(20, jobsAmount)
+	jobber := newJobber(db, jobsAmount)
+	for i := 0; i < jobsAmount; i++ {
+		job := jobber.newJob()
+		err := executor.TryToEnqueue(job)
+		require.NoError(t, err)
 
-	res := make(chan error, jobsAmount)
-	for i := 1; i <= jobsAmount; i++ {
-		// Simple query
-		executor.Enqueue(func() {
-			_, err := db.Exec("SELECT 1;")
-			res <- err
-		})
-		// Long-running query
-		executor.Enqueue(func() {
-			seconds := rand.Intn(10)
-			query := fmt.Sprintf("SELECT pg_sleep(%d);", seconds)
-			_, err := db.Exec(query)
-			res <- err
-		})
-
-		fmt.Println("queued jobs")
+		fmt.Println("queued a job")
 
 		// Main thread does something else, before it starts scheduling Postgres requests again
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	fmt.Println("waiting for jobs to finish ...")
-	failed := 0
-	for i := 1; i <= jobsAmount; i++ {
-		err := <-res
+	err, failed := jobber.getResult()
+	require.NoError(t, err)
+	require.Zero(t, failed)
+
+	require.NoError(t, db.Close())
+}
+
+type jobber struct {
+	db *sqlx.DB
+	results chan error
+	jobsAmount int
+}
+
+func newJobber(db *sqlx.DB, maxJobsAmount int) *jobber {
+	return &jobber{
+		db: db,
+		results: make(chan error, maxJobsAmount),
+	}
+}
+
+func (f *jobber) newJob() func() {
+	f.jobsAmount++
+	if randBool() {
+		// Simple job
+		return func() {
+			_, err := f.db.Exec("SELECT 1;")
+			f.results <- err
+		}
+	}
+	// Long-running job
+	return func() {
+		seconds := 1 + rand.Intn(5)
+		query := fmt.Sprintf("SELECT pg_sleep(%d);", seconds)
+		_, err := f.db.Exec(query)
+		f.results <- err
+	}
+}
+
+// err - error of the job that finished last
+// failed - amount of failed jobs
+func (f *jobber) getResult() (err error, failed int) {
+	for i := 0; i < f.jobsAmount; i++ {
+		err = <-f.results
 		if err != nil {
 			failed++
 		}
 	}
+	close(f.results)
+	return
+}
 
-	close(res)
-	require.NoError(t, db.Close())
-
-	fmt.Printf("==> %d jobs failed\n", failed)
-	require.Zero(t, failed)
+func randBool() bool {
+	return rand.Intn(2) == 0
 }
